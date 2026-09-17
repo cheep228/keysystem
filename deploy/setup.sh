@@ -41,10 +41,12 @@ id srannyhub >/dev/null 2>&1 || useradd --system --home "$APP" --shell /usr/sbin
 mkdir -p "$APP/data"
 rsync -a --delete --exclude data --exclude .env --exclude .git --exclude node_modules ./ "$APP/"
 [ -f "$APP/.env" ] || cp "$APP/.env.example" "$APP/.env"
+# файлы могли приехать с Windows: убираем CR, иначе значения читаются как непустые
+sed -i 's/$//' "$APP/.env"
 
 # админка: слушает все интерфейсы на случайном порту, пароль генерируется, если пустой
 setenv() { grep -q "^$1=" "$APP/.env" && sed -i "s|^$1=.*|$1=$2|" "$APP/.env" || echo "$1=$2" >> "$APP/.env"; }
-getenv() { grep "^$1=" "$APP/.env" | head -1 | cut -d= -f2-; }
+getenv() { grep "^$1=" "$APP/.env" | head -1 | cut -d= -f2- | tr -d ''; }
 setenv ADMIN_HOST 0.0.0.0
 [ -n "$(getenv ADMIN_PORT)" ] || setenv ADMIN_PORT "$(shuf -i 20000-60000 -n 1)"
 [ -n "$(getenv ADMIN_PASSWORD)" ] || setenv ADMIN_PASSWORD "$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)"
