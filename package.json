@@ -1,0 +1,12 @@
+{
+  "name": "srannyhub-keys",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "upload-script": "wrangler kv key put --binding=KEYS --remote script --path=script/SrannyHub.lua"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

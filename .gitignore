@@ -1,0 +1,6 @@
+node_modules/
+.wrangler/
+.dev.vars
+.env
+# сам хаб не публикуем — он загружается в KV через npm run upload-script
+script/*.lua

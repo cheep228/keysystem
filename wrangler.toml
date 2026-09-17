@@ -1,0 +1,24 @@
+name = "srannyhub-keys"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# Хранилище ключей, сессий и самого скрипта.
+# Создать: npx wrangler kv namespace create KEYS  -> вставить id ниже
+[[kv_namespaces]]
+binding = "KEYS"
+id = "PASTE_KV_NAMESPACE_ID_HERE"
+
+[vars]
+HUB_NAME = "SrannyHub"
+# Linkvertise: твой user id (цифры из ссылки link-to.net/<ID>/... в кабинете)
+LV_USER_ID = "PASTE_LINKVERTISE_USER_ID"
+# Сколько часов живёт бесплатный ключ
+KEY_HOURS = "24"
+# Минимум секунд между "Получить ключ" и возвратом с Linkvertise (защита от обхода)
+MIN_SECONDS = "10"
+# Discord / Telegram на главной (необязательно)
+COMMUNITY_URL = ""
+
+# Секреты (не хранятся в этом файле):
+#   npx wrangler secret put ADMIN_TOKEN        -> любой длинный пароль для админ-API
+#   npx wrangler secret put LV_ANTI_BYPASS     -> токен Anti-Bypassing из кабинета Linkvertise
