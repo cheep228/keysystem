@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Первичная установка на Ubuntu/Debian VPS. Запуск от root из папки проекта:
-#   bash deploy/setup.sh 4fir.xyz
+#   bash deploy/setup.sh example.com
 set -euo pipefail
 
 DOMAIN="${1:?укажи домен: bash deploy/setup.sh example.com}"
