@@ -1,18 +1,26 @@
-# /etc/caddy/Caddyfile — шаблон, DOMAIN подставляет deploy/setup.sh
-# 443 занят другим сервисом (например xray/3x-ui), поэтому HTTPS на 8443.
-# Порт 80 нужен только для выпуска сертификата Let's Encrypt и редиректа.
+# /etc/caddy/Caddyfile — шаблон, DOMAIN / ADMIN_PATH / ADMIN_PORT подставляет deploy/finish.sh.
+#
+# ВНИМАНИЕ: тут HTTP без шифрования, потому что на этом сервере HTTPS некуда поставить:
+#   443  занят xray (3x-ui), трогать нельзя;
+#   8443 режет хостер — наружу проходит только 80.
+# Когда освободится 443 или хостер откроет 8443, вернуть HTTPS:
+#   в глобальном блоке { https_port 8443 } без auto_https off,
+#   а сайт описать как "DOMAIN, www.DOMAIN { ... }" (без http://).
 {
 	http_port 80
-	https_port 8443
+	auto_https off
 }
 
-DOMAIN, www.DOMAIN {
+http://DOMAIN, http://www.DOMAIN, :80 {
 	encode gzip
-	reverse_proxy 127.0.0.1:8787
-}
 
-# доступ по IP, без домена
-:80 {
-	encode gzip
-	reverse_proxy 127.0.0.1:8787
+	# админка — по секретному пути на том же порту 80
+	@admin path /ADMIN_PATH /ADMIN_PATH/*
+	handle @admin {
+		reverse_proxy 127.0.0.1:ADMIN_PORT
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8787
+	}
 }

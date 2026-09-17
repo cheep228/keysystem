@@ -28,44 +28,50 @@ if [ -z "$(getenv ADMIN_TOKEN)" ]; then
   setenv ADMIN_TOKEN "$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 fi
 [ -n "$(getenv ADMIN_PATH)" ] || setenv ADMIN_PATH d8xuj1idaso/panel/8318
-setenv ADMIN_HOST 0.0.0.0
-setenv PUBLIC_URL "https://$DOMAIN:$SITE_PORT"
+setenv ADMIN_HOST 127.0.0.1
+setenv PUBLIC_URL "http://$DOMAIN"
 setenv DEV_NO_LINKVERTISE 0
 chmod 600 .env
 chown -R srannyhub:srannyhub "$APP" 2>/dev/null
 
-# Caddy: домен по HTTPS на 8443 + доступ по IP на порту 80 (сайт открывается и без домена)
+ADMIN_PORT="$(getenv ADMIN_PORT)"
+[ -n "$ADMIN_PORT" ] || ADMIN_PORT="$(sed -n 's/.*"port":\([0-9]*\).*/\1/p' data/admin.json 2>/dev/null)"
+[ -n "$ADMIN_PORT" ] || ADMIN_PORT=24411
+APATH="$(getenv ADMIN_PATH)"
+
+# Наружу хостер пропускает только 80 (443 занят xray), поэтому сайт и админка живут на 80.
+# HTTPS вернуть, когда освободится 443 или откроют 8443 — см. комментарий в deploy/Caddyfile.
 cat > /etc/caddy/Caddyfile <<CADDY
 {
 	http_port 80
-	https_port $SITE_PORT
+	auto_https off
 }
 
-$DOMAIN, www.$DOMAIN {
+http://$DOMAIN, http://www.$DOMAIN, :80 {
 	encode gzip
-	reverse_proxy 127.0.0.1:8787
-}
 
-:80 {
-	encode gzip
-	reverse_proxy 127.0.0.1:8787
+	@admin path /$APATH /$APATH/*
+	handle @admin {
+		reverse_proxy 127.0.0.1:$ADMIN_PORT
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:8787
+	}
 }
 CADDY
 systemctl restart caddy
 
 systemctl restart srannyhub-keys
 sleep 3
-
-ADMIN_PORT="$(getenv ADMIN_PORT)"
-[ -n "$ADMIN_PORT" ] || ADMIN_PORT="$(sed -n 's/.*"port":\([0-9]*\).*/\1/p' data/admin.json 2>/dev/null)"
 IP="$(curl -4 -s --max-time 5 https://api.ipify.org)"
 [ -n "$IP" ] || IP="$(hostname -I | awk '{print $1}')"
 
 echo
 echo "================ ДОСТУПЫ ================"
-echo "Сайт:    https://$DOMAIN:$SITE_PORT"
-echo "Сайт по IP (без домена): http://$IP"
-echo "Админка: http://$IP:$ADMIN_PORT/$(getenv ADMIN_PATH)/login"
+echo "Сайт:    http://$DOMAIN    (и http://$IP)"
+echo "Админка: http://$DOMAIN/$APATH/login"
+echo "         http://$IP/$APATH/login"
 echo "Логин:   $(getenv ADMIN_USER)"
 echo "Пароль:  $(getenv ADMIN_PASSWORD)"
 echo "Linkvertise ID: $(getenv LV_USER_ID)   Anti-Bypass: $([ -n "$(getenv LV_ANTI_BYPASS)" ] && echo задан || echo НЕ задан)"
@@ -76,23 +82,22 @@ systemctl is-active srannyhub-keys
 journalctl -u srannyhub-keys -n 8 --no-pager
 echo "--- сайт изнутри (ожидается 200):"
 curl -s -o /dev/null -w "%{http_code}\n" --max-time 5 http://127.0.0.1:8787/
-echo "--- админка изнутри (ожидается 303 или 200):"
-curl -s -o /dev/null -w "%{http_code}\n" --max-time 5 "http://127.0.0.1:$ADMIN_PORT/$(getenv ADMIN_PATH)/login"
-echo "--- порты 80 / $SITE_PORT / $ADMIN_PORT:"
-ss -ltnp | grep -E ":80 |:$SITE_PORT |:$ADMIN_PORT " || echo "ничего не слушает!"
+echo "--- админка через Caddy на 80 (ожидается 200):"
+curl -s -o /dev/null -w "%{http_code}\n" --max-time 8 "http://$IP/$APATH/login"
+echo "--- порты 80 / $ADMIN_PORT:"
+ss -ltnp | grep -E ":80 |:$ADMIN_PORT " || echo "ничего не слушает!"
 echo "--- DNS $DOMAIN (должен быть этот сервер, $IP):"
 getent hosts "$DOMAIN" || echo "A-запись не найдена — добавь в Namecheap: A @ -> $IP"
 echo "--- caddy:"
 systemctl is-active caddy
 journalctl -u caddy -n 12 --no-pager | tail -12
-echo "--- firewall (если тут правила — открой 80, $SITE_PORT, $ADMIN_PORT):"
+echo "--- firewall (наружу нужен только 80):"
 command -v ufw >/dev/null && ufw status | head -12
 command -v nft >/dev/null && nft list ruleset 2>/dev/null | head -20
 iptables -S 2>/dev/null | head -20
 echo "--- сайт по IP (http://$IP, ожидается 200):"
-curl -s -o /dev/null -w "%{http_code}
-" --max-time 8 "http://$IP/"
-echo "--- сайт снаружи:"
-curl -s -o /dev/null -w "%{http_code}\n" --max-time 10 "https://$DOMAIN:$SITE_PORT/" || echo "недоступен"
+curl -s -o /dev/null -w "%{http_code}\n" --max-time 8 "http://$IP/"
+echo "--- сайт по домену (http://$DOMAIN, ожидается 200):"
+curl -s -o /dev/null -w "%{http_code}\n" --max-time 10 "http://$DOMAIN/" || echo "недоступен"
 echo "=========================================="
 echo "Дальше: nano $APP/.env  ->  LV_USER_ID и LV_ANTI_BYPASS  ->  systemctl restart srannyhub-keys"
