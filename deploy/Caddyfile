@@ -10,3 +10,9 @@ DOMAIN, www.DOMAIN {
 	encode gzip
 	reverse_proxy 127.0.0.1:8787
 }
+
+# доступ по IP, без домена
+:80 {
+	encode gzip
+	reverse_proxy 127.0.0.1:8787
+}

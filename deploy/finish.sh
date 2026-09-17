@@ -34,8 +34,27 @@ setenv DEV_NO_LINKVERTISE 0
 chmod 600 .env
 chown -R srannyhub:srannyhub "$APP" 2>/dev/null
 
+# Caddy: домен по HTTPS на 8443 + доступ по IP на порту 80 (сайт открывается и без домена)
+cat > /etc/caddy/Caddyfile <<CADDY
+{
+	http_port 80
+	https_port $SITE_PORT
+}
+
+$DOMAIN, www.$DOMAIN {
+	encode gzip
+	reverse_proxy 127.0.0.1:8787
+}
+
+:80 {
+	encode gzip
+	reverse_proxy 127.0.0.1:8787
+}
+CADDY
+systemctl restart caddy
+
 systemctl restart srannyhub-keys
-sleep 2
+sleep 3
 
 ADMIN_PORT="$(getenv ADMIN_PORT)"
 [ -n "$ADMIN_PORT" ] || ADMIN_PORT="$(sed -n 's/.*"port":\([0-9]*\).*/\1/p' data/admin.json 2>/dev/null)"
@@ -45,6 +64,7 @@ IP="$(curl -4 -s --max-time 5 https://api.ipify.org)"
 echo
 echo "================ ДОСТУПЫ ================"
 echo "Сайт:    https://$DOMAIN:$SITE_PORT"
+echo "Сайт по IP (без домена): http://$IP"
 echo "Админка: http://$IP:$ADMIN_PORT/$(getenv ADMIN_PATH)/login"
 echo "Логин:   $(getenv ADMIN_USER)"
 echo "Пароль:  $(getenv ADMIN_PASSWORD)"
@@ -65,6 +85,13 @@ getent hosts "$DOMAIN" || echo "A-запись не найдена — доба�
 echo "--- caddy:"
 systemctl is-active caddy
 journalctl -u caddy -n 12 --no-pager | tail -12
+echo "--- firewall (если тут правила — открой 80, $SITE_PORT, $ADMIN_PORT):"
+command -v ufw >/dev/null && ufw status | head -12
+command -v nft >/dev/null && nft list ruleset 2>/dev/null | head -20
+iptables -S 2>/dev/null | head -20
+echo "--- сайт по IP (http://$IP, ожидается 200):"
+curl -s -o /dev/null -w "%{http_code}
+" --max-time 8 "http://$IP/"
 echo "--- сайт снаружи:"
 curl -s -o /dev/null -w "%{http_code}\n" --max-time 10 "https://$DOMAIN:$SITE_PORT/" || echo "недоступен"
 echo "=========================================="
