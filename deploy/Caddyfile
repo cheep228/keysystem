@@ -1,5 +1,11 @@
 # /etc/caddy/Caddyfile — шаблон, DOMAIN подставляет deploy/setup.sh
-# HTTPS-сертификат Let's Encrypt выпускается автоматически
+# 443 занят другим сервисом (например xray/3x-ui), поэтому HTTPS на 8443.
+# Порт 80 нужен только для выпуска сертификата Let's Encrypt и редиректа.
+{
+	http_port 80
+	https_port 8443
+}
+
 DOMAIN, www.DOMAIN {
 	encode gzip
 	reverse_proxy 127.0.0.1:8787

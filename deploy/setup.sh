@@ -8,9 +8,10 @@ WITH_UFW="${2:-}"   # второй аргумент --with-ufw: открыть �
 
 APP=/opt/srannyhub-keys
 
-# ничего не ломаем на сервере: 80/443 должны быть свободны (3x-ui, nginx и т.п. не трогаем)
+# ничего не ломаем: 443 может быть занят xray/3x-ui, поэтому HTTPS сайта живёт на SITE_PORT
+SITE_PORT=8443
 echo "== проверка портов =="
-for p in 80 443; do
+for p in 80 "$SITE_PORT"; do
   if ss -ltnp 2>/dev/null | grep -q ":$p "; then
     echo "Порт $p занят:"
     ss -ltnp | grep ":$p "
@@ -49,7 +50,7 @@ setenv ADMIN_HOST 0.0.0.0
 [ -n "$(getenv ADMIN_PASSWORD)" ] || setenv ADMIN_PASSWORD "$(head -c 24 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 24)"
 [ -n "$(getenv ADMIN_TOKEN)" ] || setenv ADMIN_TOKEN "$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 setenv DEV_NO_LINKVERTISE 0
-setenv PUBLIC_URL "https://$DOMAIN"
+setenv PUBLIC_URL "https://$DOMAIN:$SITE_PORT"
 
 chown -R srannyhub:srannyhub "$APP"
 chmod 600 "$APP/.env"
@@ -67,17 +68,17 @@ systemctl reload caddy || systemctl restart caddy
 if [ "$WITH_UFW" = "--with-ufw" ] && command -v ufw >/dev/null && ufw status | grep -q "^Status: active"; then
   echo "== firewall: открываю порты (ufw уже активен) =="
   ufw allow 80/tcp
-  ufw allow 443/tcp
+  ufw allow "$SITE_PORT/tcp"
   ufw allow "$(getenv ADMIN_PORT)/tcp"
 else
   echo "== firewall не трогаю =="
-  echo "   Если у тебя активен ufw/iptables — открой сам: 80, 443 и $(getenv ADMIN_PORT)"
+  echo "   Если у тебя активен ufw/iptables — открой сам: 80, $SITE_PORT и $(getenv ADMIN_PORT)"
 fi
 
 IP=$(curl -4 -s https://api.ipify.org || hostname -I | awk '{print $1}')
 echo
 echo "Готово."
-echo "  Сайт:    https://$DOMAIN"
+echo "  Сайт:    https://$DOMAIN:$SITE_PORT"
 echo "  Админка: http://$IP:$(getenv ADMIN_PORT)/$(getenv ADMIN_PATH)/login"
 echo "  Логин:   $(getenv ADMIN_USER)"
 echo "  Пароль:  $(getenv ADMIN_PASSWORD)"
