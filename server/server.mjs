@@ -7,7 +7,9 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 import worker from "../src/index.js";
+import adminApp from "../src/admin.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -67,6 +69,11 @@ const KEYS = {
     store.delete(key);
     scheduleSave();
   },
+  async list(prefix) {
+    const out = [];
+    for (const [name, e] of store) if (name.startsWith(prefix) && alive(e)) out.push({ name, value: e.v });
+    return out;
+  },
 };
 
 // чистка истёкших записей раз в 10 минут
@@ -76,42 +83,78 @@ setInterval(() => {
   if (changed) scheduleSave();
 }, 10 * 60 * 1000).unref();
 
-const env = { ...config, KEYS };
+const LOADER_FILE = path.join(ROOT, "loader", "loader.lua");
+const env = { ...config, KEYS, loaderTemplate: () => fs.readFileSync(LOADER_FILE, "utf8") };
+
+// ---------- порт админки ----------
+// ADMIN_PORT пустой -> генерируется случайный порт и сохраняется в data/admin.json
+function adminPort() {
+  if (config.ADMIN_PORT) return Number(config.ADMIN_PORT);
+  const file = path.join(DATA_DIR, "admin.json");
+  const saved = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+  if (!saved.port) {
+    do saved.port = crypto.randomInt(20000, 60000);
+    while (saved.port === PORT);
+    fs.writeFileSync(file, JSON.stringify(saved));
+  }
+  return saved.port;
+}
+const ADMIN_PORT = adminPort();
+const ADMIN_HOST = config.ADMIN_HOST || HOST;
+const ADMIN_PATH = "/" + String(config.ADMIN_PATH || "d8xuj1idaso/panel/8318").replace(/^\/+|\/+$/g, "");
 
 // ---------- HTTP ----------
-const server = http.createServer(async (req, res) => {
-  try {
-    const proto = req.headers["x-forwarded-proto"] || "http";
-    const host = req.headers["x-forwarded-host"] || req.headers.host || `localhost:${PORT}`;
-    const url = `${proto}://${host}${req.url}`;
+const MAX_BODY = 8 * 1024 * 1024;
 
-    const headers = new Headers();
-    for (const [k, v] of Object.entries(req.headers)) {
-      if (Array.isArray(v)) v.forEach((x) => headers.append(k, x));
-      else if (v != null) headers.set(k, v);
+function handler(app) {
+  return async (req, res) => {
+    try {
+      const proto = req.headers["x-forwarded-proto"] || "http";
+      const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
+      const url = `${proto}://${host}${req.url}`;
+
+      const headers = new Headers();
+      for (const [k, v] of Object.entries(req.headers)) {
+        if (Array.isArray(v)) v.forEach((x) => headers.append(k, x));
+        else if (v != null) headers.set(k, v);
+      }
+      // реальный IP клиента (от Caddy — X-Forwarded-For, напрямую — адрес сокета)
+      const fwd = app === adminApp ? "" : req.headers["x-forwarded-for"];
+      const ip = String(fwd || req.socket.remoteAddress || "").split(",")[0].trim();
+      headers.set("cf-connecting-ip", ip);
+
+      const chunks = [];
+      let size = 0;
+      for await (const c of req) {
+        size += c.length;
+        if (size > MAX_BODY) {
+          res.writeHead(413).end("Too large");
+          return;
+        }
+        chunks.push(c);
+      }
+      const body = ["GET", "HEAD"].includes(req.method) ? undefined : Buffer.concat(chunks);
+
+      const response = await app.fetch(new Request(url, { method: req.method, headers, body, redirect: "manual" }), env);
+
+      const outHeaders = {};
+      response.headers.forEach((v, k) => { outHeaders[k] = v; });
+      const cookies = response.headers.getSetCookie?.() || [];
+      if (cookies.length) outHeaders["set-cookie"] = cookies;
+      res.writeHead(response.status, outHeaders);
+      res.end(Buffer.from(await response.arrayBuffer()));
+    } catch (err) {
+      console.error(err);
+      if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
+      res.end('{"ok":false,"error":"internal"}');
     }
-    // реальный IP клиента от Caddy
-    const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
-    headers.set("cf-connecting-ip", ip);
+  };
+}
 
-    const chunks = [];
-    for await (const c of req) chunks.push(c);
-    const body = ["GET", "HEAD"].includes(req.method) ? undefined : Buffer.concat(chunks);
-
-    const response = await worker.fetch(new Request(url, { method: req.method, headers, body, redirect: "manual" }), env);
-
-    const outHeaders = {};
-    response.headers.forEach((v, k) => { outHeaders[k] = v; });
-    res.writeHead(response.status, outHeaders);
-    res.end(Buffer.from(await response.arrayBuffer()));
-  } catch (err) {
-    console.error(err);
-    res.writeHead(500, { "content-type": "application/json" });
-    res.end('{"ok":false,"error":"internal"}');
-  }
-});
-
-server.listen(PORT, HOST, () => console.log(`SrannyHub keys on http://${HOST}:${PORT}`));
+http.createServer(handler(worker)).listen(PORT, HOST, () => console.log(`Сайт:    http://${HOST}:${PORT}`));
+http.createServer(handler(adminApp)).listen(ADMIN_PORT, ADMIN_HOST, () =>
+  console.log(`Админка: http://${ADMIN_HOST === "0.0.0.0" ? "<IP сервера>" : ADMIN_HOST}:${ADMIN_PORT}${ADMIN_PATH}/login`)
+);
 
 function shutdown() {
   if (saveTimer) {

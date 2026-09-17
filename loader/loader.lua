@@ -1,5 +1,8 @@
 -- SrannyHub loader: окно ввода ключа -> проверка на сайте -> загрузка хаба с сервера
-local SITE = "https://YOUR_DOMAIN" -- реальный адрес в loader.prod.lua (не в git)
+-- Шаблон: {{SITE}} и {{SCRIPT_ID}} подставляет сервер (админка -> Скрипты -> Loader)
+local SITE = "{{SITE}}"
+local SCRIPT_ID = "{{SCRIPT_ID}}"
+local NONCE = "{{NONCE}}" -- одноразовый, живёт 2 минуты
 local KEY_FILE = "SrannyHub/key.txt"
 
 local Players = game:GetService("Players")
@@ -23,8 +26,22 @@ local function httpGet(url)
 	return ok and res or nil
 end
 
+-- что видно в админке: экзекьютор, игрок, игра
+local function clientQuery()
+	local exName, exVersion = "unknown", ""
+	if type(identifyexecutor) == "function" then
+		local ok, n, v = pcall(identifyexecutor)
+		if ok and n then exName, exVersion = tostring(n), tostring(v or "") end
+	elseif type(getexecutorname) == "function" then
+		local ok, n = pcall(getexecutorname)
+		if ok and n then exName = tostring(n) end
+	end
+	return ("&executor=%s&exver=%s&user=%s&uid=%d&place=%d"):format(
+		urlEncode(exName), urlEncode(exVersion), urlEncode(player.Name), player.UserId, game.PlaceId)
+end
+
 local function checkKey(key)
-	local body = httpGet(("%s/api/verify?key=%s&hwid=%s"):format(SITE, urlEncode(key), urlEncode(getHwid())))
+	local body = httpGet(("%s/api/verify?key=%s&hwid=%s"):format(SITE, urlEncode(key), urlEncode(getHwid())) .. clientQuery())
 	if not body then return false, "нет связи с сервером" end
 	local ok, data = pcall(HttpService.JSONDecode, HttpService, body)
 	if not ok then return false, "неверный ответ сервера" end
@@ -39,7 +56,7 @@ local function checkKey(key)
 end
 
 local function loadHub(key)
-	local code = httpGet(("%s/api/script?key=%s&hwid=%s"):format(SITE, urlEncode(key), urlEncode(getHwid())))
+	local code = httpGet(("%s/api/script?id=%s&n=%s&key=%s&hwid=%s"):format(SITE, urlEncode(SCRIPT_ID), urlEncode(NONCE), urlEncode(key), urlEncode(getHwid())) .. clientQuery())
 	assert(code, "не удалось скачать скрипт")
 	local fn, err = loadstring(code)
 	assert(fn, err)
@@ -58,10 +75,22 @@ local function savedKey()
 	return ok and k and k ~= "" and k or nil
 end
 
--- сохранённый ключ ещё валиден — сразу грузим
+local function notify(text)
+	pcall(function()
+		game:GetService("StarterGui"):SetCore("SendNotification", { Title = "SrannyHub", Text = text, Duration = 5 })
+	end)
+end
+
+-- сохранённый ключ ещё валиден — сразу грузим; иначе удаляем его и показываем окно
 local cached = savedKey()
-if cached and checkKey(cached) then
-	return loadHub(cached)
+if cached then
+	local ok, reason = checkKey(cached)
+	if ok then
+		notify("Ключ принят (сохранённый): " .. cached:sub(1, 11) .. "…")
+		return loadHub(cached)
+	end
+	notify("Сохранённый ключ не подошёл: " .. tostring(reason))
+	if type(delfile) == "function" then pcall(delfile, KEY_FILE) end
 end
 
 -- ===== окно ввода ключа =====

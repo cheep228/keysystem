@@ -1,4 +1,4 @@
-// SrannyHub key system — Cloudflare Worker
+// SrannyHub key system — логика сайта (запуск: server/server.mjs)
 //
 // Поток:
 //   GET  /                 главная с кнопкой "Получить ключ"
@@ -7,6 +7,8 @@
 //   GET  /api/verify?key=&hwid=   проверка ключа из скрипта (привязка к HWID при первом входе)
 //   GET  /api/script?key=&hwid=   отдаёт код хаба только по валидному ключу
 //   POST /api/admin/*      управление ключами (Authorization: Bearer ADMIN_TOKEN)
+
+import { bumpStat, clientInfo, recordUser, resolveScript, getScript, buildLoader } from "./store.js";
 
 const SESSION_TTL = 30 * 60;
 
@@ -25,6 +27,9 @@ export default {
 
 async function route(request, env, url) {
     try {
+      // /l/<id> — loader с ключ-системой для скрипта <id>
+      const lm = url.pathname.match(/^\/l\/([a-f0-9]{12})$/);
+      if (lm) return loader(env, lm[1]);
       switch (url.pathname) {
         case "/": return home(env);
         case "/robots.txt": return new Response("User-agent: *\nDisallow: /\n", { headers: { "content-type": "text/plain" } });
@@ -60,7 +65,7 @@ function randomHex(bytes) {
   return [...a].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function newKey() {
+export function newKey() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const a = new Uint8Array(16);
   crypto.getRandomValues(a);
@@ -87,6 +92,7 @@ function linkvertiseUrl(env, target) {
 
 // Linkvertise Anti-Bypassing: POST .../anti_bypassing?token=&hash= -> TRUE / FALSE
 async function linkvertiseHashValid(env, hash) {
+  if (env.DEV_NO_LINKVERTISE === "1") return true;
   if (!env.LV_ANTI_BYPASS) return true; // не настроено — полагаемся на сессию и MIN_SECONDS
   if (!hash) return false;
   const res = await fetch(
@@ -109,35 +115,38 @@ function page(env, title, body, status = 200) {
 <meta name="robots" content="noindex, nofollow">
 <title>${hub} — ${esc(title)}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#0b0b10; --card:#15151d; --line:#262633; --text:#ececf3; --muted:#8b8ba0; --accent:#7c5cff; --accent2:#b06bff; --ok:#3ddc84; --bad:#ff5c7a; }
+  :root { --bg:#000; --fg:#fff; --dim:#8a8a8a; --line:#2a2a2a; }
   * { box-sizing:border-box; }
-  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:16px;
-    background:radial-gradient(900px 500px at 50% -10%, #2a1d5c55, transparent), var(--bg);
-    color:var(--text); font-family:Inter,system-ui,sans-serif; }
-  .card { width:100%; max-width:440px; background:var(--card); border:1px solid var(--line);
-    border-radius:18px; padding:32px 28px; text-align:center; box-shadow:0 20px 60px #0008; }
-  .logo { font-weight:800; font-size:30px; letter-spacing:-.5px; margin:0 0 4px;
-    background:linear-gradient(90deg,var(--accent),var(--accent2)); -webkit-background-clip:text; background-clip:text; color:transparent; }
-  h2 { margin:18px 0 8px; font-size:18px; }
-  .muted { color:var(--muted); font-size:14px; line-height:1.5; margin:8px 0 20px; }
-  .btn { display:inline-block; width:100%; padding:14px 18px; border:0; border-radius:12px; cursor:pointer;
-    background:linear-gradient(90deg,var(--accent),var(--accent2)); color:#fff; font:600 15px Inter,sans-serif; text-decoration:none; }
-  .btn:hover { filter:brightness(1.1); }
-  .btn.ghost { background:transparent; border:1px solid var(--line); color:var(--text); margin-top:10px; }
-  .key { font-family:"JetBrains Mono",monospace; font-size:15px; background:#0e0e14; border:1px dashed var(--accent);
-    border-radius:10px; padding:14px; margin:10px 0 14px; word-break:break-all; user-select:all; }
-  .steps { text-align:left; color:var(--muted); font-size:14px; padding-left:20px; margin:0 0 22px; }
-  .steps li { margin:6px 0; }
-  .ok { color:var(--ok); } .bad { color:var(--bad); }
-  footer { margin-top:18px; font-size:12px; color:var(--muted); }
-  footer a { color:var(--muted); }
+  html, body { background:var(--bg); }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px 16px;
+    color:var(--fg); font:400 14px/1.6 "IBM Plex Mono",ui-monospace,monospace; }
+  .card { width:100%; max-width:420px; border:1px solid var(--line); padding:28px 24px; }
+  .logo { margin:0; font:700 26px/1 "Space Grotesk",sans-serif; letter-spacing:-.02em; text-transform:uppercase; }
+  .tag { display:block; margin:8px 0 26px; color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.12em; }
+  h2 { margin:0 0 14px; font:500 13px "IBM Plex Mono",monospace; text-transform:uppercase; letter-spacing:.12em; }
+  .muted { color:var(--dim); font-size:13px; margin:16px 0 0; }
+  .btn { display:block; width:100%; padding:13px 16px; border:1px solid var(--fg); border-radius:0; cursor:pointer;
+    background:var(--fg); color:var(--bg); font:500 14px "IBM Plex Mono",monospace; text-align:center;
+    text-transform:uppercase; letter-spacing:.08em; text-decoration:none; }
+  .btn:hover { background:var(--bg); color:var(--fg); }
+  .btn:focus-visible { outline:1px solid var(--fg); outline-offset:3px; }
+  .key { font:500 15px "IBM Plex Mono",monospace; border:1px solid var(--fg); padding:14px; margin:0 0 12px;
+    word-break:break-all; user-select:all; text-align:center; letter-spacing:.04em; }
+  .steps { list-style:none; counter-reset:s; padding:0; margin:0 0 22px; border-top:1px solid var(--line); }
+  .steps li { counter-increment:s; display:flex; gap:14px; padding:10px 0; border-bottom:1px solid var(--line); }
+  .steps li::before { content:"0" counter(s); color:var(--dim); }
+  .ok, .bad { color:var(--fg); }
+  footer { margin-top:22px; font-size:12px; color:var(--dim); }
+  footer:empty { display:none; }
+  footer a { color:var(--dim); }
 </style>
 </head>
 <body>
 <main class="card">
   <p class="logo">${hub}</p>
+  <span class="tag">Key system</span>
   ${body}
   <footer>${env.COMMUNITY_URL ? `<a href="${esc(env.COMMUNITY_URL)}" target="_blank" rel="noopener">Community</a>` : ""}</footer>
 </main>
@@ -167,6 +176,8 @@ async function start(request, env, url) {
     { expirationTtl: SESSION_TTL }
   );
   const target = `${url.origin}/claim?s=${session}`;
+  // DEV_NO_LINKVERTISE=1 — только для локальной проверки: сразу на /claim, без Linkvertise
+  if (env.DEV_NO_LINKVERTISE === "1") return Response.redirect(target, 302);
   return Response.redirect(linkvertiseUrl(env, target), 302);
 }
 
@@ -197,13 +208,14 @@ async function claim(request, env, url) {
     data = { type: "free", created: Date.now(), expires: Date.now() + ttl * 1000, hwid: null };
     await env.KEYS.put(`key:${key}`, JSON.stringify(data), { expirationTtl: ttl });
     await env.KEYS.put(`ip:${ipHash}`, key, { expirationTtl: ttl });
+    await bumpStat(env, "keys");
   }
 
   const left = Math.max(0, Math.round((data.expires - Date.now()) / 3600000));
   return page(env, "Твой ключ", `
     <h2 class="ok">Ключ получен</h2>
     <div class="key" id="k">${esc(key)}</div>
-    <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('k').textContent).then(()=>{this.textContent='Скопировано ✓'})">Копировать</button>
+    <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('k').textContent).then(()=>{this.textContent='Скопировано'})">Копировать</button>
     <p class="muted">Осталось ~${left} ч. Ключ привяжется к устройству при первом запуске.</p>`);
 }
 
@@ -228,20 +240,48 @@ async function checkKey(env, key, hwid) {
   } else if (data.hwid !== hwidHash) {
     return { valid: false, reason: "hwid_mismatch" };
   }
-  return { valid: true, type: data.type, expires: data.expires || null };
+  return { valid: true, type: data.type, expires: data.expires || null, key, hwidHash };
 }
 
 async function verify(env, url) {
   const r = await checkKey(env, url.searchParams.get("key"), url.searchParams.get("hwid"));
-  return json(r, r.valid ? 200 : 403);
+  if (!r.valid) return json(r, 403);
+  await recordUser(env, r.hwidHash, r.key, clientInfo(url), "verify");
+  await bumpStat(env, "verifies");
+  return json({ valid: true, type: r.type, expires: r.expires });
 }
 
 async function script(env, url) {
   const r = await checkKey(env, url.searchParams.get("key"), url.searchParams.get("hwid"));
   if (!r.valid) return new Response(`error("[key] ${r.reason}")`, { status: 403, headers: { "content-type": "text/plain" } });
-  const code = await env.KEYS.get("script");
+  const info = clientInfo(url);
+  const id = url.searchParams.get("id") || "";
+  let code;
+  if (id) {
+    const nonce = url.searchParams.get("n") || "";
+    const forId = nonce && (await env.KEYS.get(`nonce:${nonce}`));
+    if (forId !== id) return new Response(`error("[key] stale loader — запусти loader заново")`, { status: 403, headers: { "content-type": "text/plain" } });
+    await env.KEYS.delete(`nonce:${nonce}`);
+    const s = await getScript(env, id);
+    if (!s || !s.enabled) return new Response(`error("[key] script disabled or removed")`, { status: 404, headers: { "content-type": "text/plain" } });
+    code = s.code;
+    info.scriptId = id;
+  } else {
+    code = await resolveScript(env, info.placeId);
+  }
   if (!code) return new Response(`error("[key] script not uploaded")`, { status: 503, headers: { "content-type": "text/plain" } });
+  await recordUser(env, r.hwidHash, r.key, info, "run");
+  await bumpStat(env, "runs");
   return new Response(code, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+}
+
+async function loader(env, id) {
+  const s = await getScript(env, id);
+  if (!s || !s.enabled) return new Response(`error("script disabled or removed")`, { status: 404, headers: { "content-type": "text/plain" } });
+  // одноразовый токен: код скрипта отдаётся только по свежему loader, а не по голой ссылке
+  const nonce = randomHex(8);
+  await env.KEYS.put(`nonce:${nonce}`, id, { expirationTtl: 120 });
+  return new Response(buildLoader(env, id, nonce), { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
 }
 
 // ---------- admin ----------

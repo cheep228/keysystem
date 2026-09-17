@@ -52,16 +52,25 @@
 
 Логи: `journalctl -u srannyhub-keys -f`, `journalctl -u caddy -f`.
 
-## Админка
+## Админ-панель
 
-`POST` с заголовком `Authorization: Bearer <ADMIN_TOKEN>`:
+Отдельный порт, адрес: `http://<IP>:<ADMIN_PORT>/<ADMIN_PATH>/login`
+(по умолчанию путь `d8xuj1idaso/panel/8318`). Порт случайный: локально сохраняется в `data/admin.json`,
+на VPS `setup.sh` пишет его в `.env`, открывает в firewall и печатает ссылку, логин и пароль.
 
-```bash
-curl -X POST https://<домен>/api/admin/create     -H "Authorization: Bearer TOKEN" -d '{"hours":0,"note":"вечный"}'
-curl -X POST https://<домен>/api/admin/revoke     -H "Authorization: Bearer TOKEN" -d '{"key":"SRANNY-..."}'
-curl -X POST https://<домен>/api/admin/reset-hwid -H "Authorization: Bearer TOKEN" -d '{"key":"SRANNY-..."}'
-curl -X POST https://<домен>/api/admin/info       -H "Authorization: Bearer TOKEN" -d '{"key":"SRANNY-..."}'
-```
+| Раздел | Что есть |
+|---|---|
+| Статистика | игроки всего / за час / за сутки, новые, запуски и ключи за день, график запусков за 30 дней, экзекьюторы, игры |
+| Игроки | ник и UserId (ссылка на профиль), экзекьютор и версия, PlaceId, ключ, число запусков, первый/последний вход, поиск и фильтр по экзекьютору |
+| Ключи | создать (24 ч / 7 д / 30 д / навсегда, заметка), блок/разблок, сброс HWID, удаление |
+| Скрипты | добавить (вставить код или загрузить .lua), привязать к PlaceId или сделать «по умолчанию», вкл/выкл, удалить |
+
+Какой скрипт получает игрок: привязанный к PlaceId его игры -> «по умолчанию» -> файл `script/SrannyHub.lua`.
+
+Защита: логин/пароль из `.env`, сессия 12 ч в HttpOnly-cookie, CSRF-токен на всех действиях,
+5 неверных входов с IP -> блок на 15 минут, чужой путь -> 404.
+
+Для curl остался API с `Authorization: Bearer <ADMIN_TOKEN>`: `/api/admin/create|revoke|reset-hwid|info` на основном сайте.
 
 ## Защита
 
