@@ -4,3 +4,6 @@ node_modules/
 .env
 # сам хаб не публикуем — он загружается в KV через npm run upload-script
 script/*.lua
+# реальный домен и боевой loader — только локально
+wrangler.prod.toml
+loader/*.prod.lua

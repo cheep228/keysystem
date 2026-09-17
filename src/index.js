@@ -13,9 +13,21 @@ const SESSION_TTL = 30 * 60;
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const res = await route(request, env, url);
+    // сайт не индексируется поисковиками и не встраивается на чужие страницы
+    const out = new Response(res.body, res);
+    out.headers.set("x-robots-tag", "noindex, nofollow, noarchive");
+    out.headers.set("x-frame-options", "DENY");
+    out.headers.set("referrer-policy", "no-referrer");
+    return out;
+  },
+};
+
+async function route(request, env, url) {
     try {
       switch (url.pathname) {
         case "/": return home(env);
+        case "/robots.txt": return new Response("User-agent: *\nDisallow: /\n", { headers: { "content-type": "text/plain" } });
         case "/start": return start(request, env, url);
         case "/claim": return claim(request, env, url);
         case "/api/verify": return verify(env, url);
@@ -30,8 +42,7 @@ export default {
       console.error(err);
       return json({ ok: false, error: "internal" }, 500);
     }
-  },
-};
+}
 
 // ---------- helpers ----------
 
@@ -95,6 +106,7 @@ function page(env, title, body, status = 200) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
 <title>${hub} — ${esc(title)}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">

@@ -1,5 +1,5 @@
 -- SrannyHub loader: окно ввода ключа -> проверка на сайте -> загрузка хаба с сервера
-local SITE = "https://srannyhub-keys.YOUR_SUBDOMAIN.workers.dev" -- поменять на свой адрес
+local SITE = "https://YOUR_DOMAIN" -- реальный адрес в loader.prod.lua (не в git)
 local KEY_FILE = "SrannyHub/key.txt"
 
 local Players = game:GetService("Players")

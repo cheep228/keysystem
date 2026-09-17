@@ -50,10 +50,19 @@
 
 После каждого изменения хаба — снова `npm run upload-script` (loader менять не нужно).
 
-## Свой домен (4fir.su)
+## Свой домен (не публикуется в git)
 
-Cloudflare -> Workers -> srannyhub-keys -> Settings -> Domains & Routes -> Add Custom Domain
-(например `key.4fir.su`; домен должен быть подключён к Cloudflare). Потом обнови `SITE` в loader.
+Реальный домен хранится только локально:
+
+- `wrangler.prod.toml` — копия `wrangler.toml` с `routes = [{ pattern = "<домен>", custom_domain = true }]`
+  и `workers_dev = false` (адрес `*.workers.dev` выключен);
+- `loader/loader.prod.lua` — loader с настоящим `SITE`, его и раздаёшь.
+
+Оба файла в `.gitignore`. `npm run deploy` и `npm run upload-script` используют `wrangler.prod.toml`.
+Домен должен быть подключён к Cloudflare (NS-серверы у регистратора -> Cloudflare).
+
+Сайт отдаёт `robots.txt` с `Disallow: /`, `X-Robots-Tag: noindex` и `<meta name="robots">` —
+поисковики его не индексируют.
 
 ## Админка
 
