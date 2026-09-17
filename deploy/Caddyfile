@@ -1,0 +1,6 @@
+# /etc/caddy/Caddyfile — шаблон, DOMAIN подставляет deploy/setup.sh
+# HTTPS-сертификат Let's Encrypt выпускается автоматически
+DOMAIN, www.DOMAIN {
+	encode gzip
+	reverse_proxy 127.0.0.1:8787
+}

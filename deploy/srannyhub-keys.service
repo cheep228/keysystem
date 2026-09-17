@@ -1,0 +1,18 @@
+[Unit]
+Description=SrannyHub key system
+After=network.target
+
+[Service]
+Type=simple
+User=srannyhub
+WorkingDirectory=/opt/srannyhub-keys
+ExecStart=/usr/bin/node server/server.mjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/srannyhub-keys/data
+
+[Install]
+WantedBy=multi-user.target

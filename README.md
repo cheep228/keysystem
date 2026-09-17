@@ -1,96 +1,80 @@
 # SrannyHub Key System
 
-Сайт выдачи ключей через Linkvertise на Cloudflare Workers + KV (бесплатный тариф).
+Сайт выдачи ключей через Linkvertise. Работает на своём VPS: Node.js + Caddy (HTTPS).
 
 ```
 Игрок -> сайт "Получить ключ" -> Linkvertise -> /claim (проверка anti-bypass) -> ключ
-Скрипт (loader.lua) -> /api/verify (ключ + HWID) -> /api/script -> код хаба
+Скрипт (loader) -> /api/verify (ключ + HWID) -> /api/script -> код хаба
 ```
 
-Код хаба лежит на сервере (в KV) и отдаётся только по валидному ключу — без ключа его не скачать.
+Код хаба лежит только на сервере и отдаётся по валидному ключу.
 
 ## Структура
 
-| Файл | Что это |
+| Путь | Что это |
 |---|---|
-| `src/index.js` | Worker: сайт, выдача ключей, API проверки, админка |
-| `wrangler.toml` | Конфиг Cloudflare (KV, Linkvertise ID, срок ключа) |
-| `loader/loader.lua` | То, что ты раздаёшь игрокам: окно ввода ключа -> загрузка хаба |
-| `script/SrannyHub.lua` | Сам хаб, загружается в KV командой `upload-script` |
+| `src/index.js` | Логика сайта: страницы, выдача ключей, API, админка |
+| `server/server.mjs` | HTTP-сервер для VPS, хранилище ключей в `data/kv.json` |
+| `deploy/setup.sh` | Установка на чистый Ubuntu/Debian: Node, Caddy, systemd, firewall |
+| `deploy/update.sh` | Обновление кода на сервере |
+| `deploy/Caddyfile` | Шаблон HTTPS-прокси (домен подставляет setup.sh) |
+| `loader/loader.lua` | Loader для игроков (`SITE` — заглушка) |
+| `script/SrannyHub.lua` | Хаб — **не в git**, кладётся на сервер вручную |
 
-## Установка
+Не в git: `.env` (секреты), `data/` (ключи), `script/*.lua` (хаб), `loader/*.prod.lua` (loader с реальным доменом).
 
-1. Аккаунт на https://dash.cloudflare.com (бесплатно), потом в этой папке:
-   ```
-   npm install
-   npx wrangler login
-   ```
-2. Создать хранилище и вставить выданный `id` в `wrangler.toml` вместо `PASTE_KV_NAMESPACE_ID_HERE`:
-   ```
-   npx wrangler kv namespace create KEYS
-   ```
-3. Linkvertise:
-   - `LV_USER_ID` в `wrangler.toml` — число из твоих ссылок `https://link-to.net/<ID>/...`
-     (кабинет Linkvertise -> Dynamic Links / Full Script API).
-   - Токен Anti-Bypassing (кабинет -> Anti-Bypassing) — секретом:
-     ```
-     npx wrangler secret put LV_ANTI_BYPASS
-     ```
-4. Пароль админки:
-   ```
-   npx wrangler secret put ADMIN_TOKEN
-   ```
-5. Деплой и загрузка хаба:
-   ```
-   npm run deploy
-   npm run upload-script
-   ```
-   Wrangler напишет адрес вида `https://srannyhub-keys.<name>.workers.dev`.
-6. В `loader/loader.lua` поменять `SITE` на этот адрес и раздавать игрокам loader.
+## DNS (Namecheap -> Advanced DNS)
 
-После каждого изменения хаба — снова `npm run upload-script` (loader менять не нужно).
+| Type | Host | Value | TTL |
+|---|---|---|---|
+| A Record | `@` | IP VPS | Automatic |
+| A Record | `www` | IP VPS | Automatic |
 
-## Свой домен (не публикуется в git)
+Удалить стандартные записи Namecheap для `@` и `www` (parking CNAME / URL Redirect), если есть.
 
-Реальный домен хранится только локально:
+## Установка на VPS
 
-- `wrangler.prod.toml` — копия `wrangler.toml` с `routes = [{ pattern = "<домен>", custom_domain = true }]`
-  и `workers_dev = false` (адрес `*.workers.dev` выключен);
-- `loader/loader.prod.lua` — loader с настоящим `SITE`, его и раздаёшь.
+1. Скопировать папку проекта на сервер (вместе с `script/SrannyHub.lua`), например:
+   ```
+   scp -r . root@IP:/root/srannyhub-keys
+   ```
+2. На сервере:
+   ```
+   cd /root/srannyhub-keys
+   bash deploy/setup.sh <домен>
+   nano /opt/srannyhub-keys/.env      # LV_USER_ID, LV_ANTI_BYPASS, ADMIN_TOKEN
+   systemctl restart srannyhub-keys
+   ```
+3. Открыть `https://<домен>` — сертификат выпустится сам, когда DNS уже указывает на VPS.
+4. В `loader/loader.prod.lua` указан реальный `SITE` — его и раздавать.
 
-Оба файла в `.gitignore`. `npm run deploy` и `npm run upload-script` используют `wrangler.prod.toml`.
-Домен должен быть подключён к Cloudflare (NS-серверы у регистратора -> Cloudflare).
+Обновление хаба или сайта: скопировать файлы заново и `bash deploy/update.sh`.
 
-Сайт отдаёт `robots.txt` с `Disallow: /`, `X-Robots-Tag: noindex` и `<meta name="robots">` —
-поисковики его не индексируют.
+Логи: `journalctl -u srannyhub-keys -f`, `journalctl -u caddy -f`.
 
 ## Админка
 
-Все запросы — `POST` с заголовком `Authorization: Bearer <ADMIN_TOKEN>`.
+`POST` с заголовком `Authorization: Bearer <ADMIN_TOKEN>`:
 
 ```bash
-# вечный ключ (hours: 0) или на N часов
-curl -X POST https://<site>/api/admin/create -H "Authorization: Bearer TOKEN" -d '{"hours":0,"note":"для друга"}'
-# заблокировать
-curl -X POST https://<site>/api/admin/revoke -H "Authorization: Bearer TOKEN" -d '{"key":"SRANNY-XXXX-XXXX-XXXX-XXXX"}'
-# сбросить привязку к устройству
-curl -X POST https://<site>/api/admin/reset-hwid -H "Authorization: Bearer TOKEN" -d '{"key":"SRANNY-XXXX-XXXX-XXXX-XXXX"}'
-# инфо по ключу
-curl -X POST https://<site>/api/admin/info -H "Authorization: Bearer TOKEN" -d '{"key":"SRANNY-XXXX-XXXX-XXXX-XXXX"}'
+curl -X POST https://<домен>/api/admin/create     -H "Authorization: Bearer TOKEN" -d '{"hours":0,"note":"вечный"}'
+curl -X POST https://<домен>/api/admin/revoke     -H "Authorization: Bearer TOKEN" -d '{"key":"SRANNY-..."}'
+curl -X POST https://<домен>/api/admin/reset-hwid -H "Authorization: Bearer TOKEN" -d '{"key":"SRANNY-..."}'
+curl -X POST https://<домен>/api/admin/info       -H "Authorization: Bearer TOKEN" -d '{"key":"SRANNY-..."}'
 ```
 
 ## Защита
 
-- Сессия на 30 мин, одноразовая, привязана к IP (хэш).
-- `MIN_SECONDS` — нельзя вернуться с Linkvertise быстрее, чем за N секунд.
-- Anti-Bypassing Linkvertise: без подтверждённого `hash` ключ не выдаётся
-  (если `LV_ANTI_BYPASS` не задан — проверка пропускается, работают только сессия и таймер).
-- Один активный ключ на IP: повторное прохождение отдаёт тот же ключ.
-- Ключ привязывается к HWID при первом запуске.
+- Одноразовая сессия на 30 мин, привязана к IP (хэш).
+- `MIN_SECONDS` — нельзя вернуться с Linkvertise быстрее N секунд.
+- Linkvertise Anti-Bypassing: без подтверждённого `hash` ключ не выдаётся.
+- Один активный ключ на IP; ключ привязывается к HWID при первом запуске.
+- Сервер слушает только `127.0.0.1`, наружу открыты 80/443 через Caddy.
+- `robots.txt: Disallow /`, `X-Robots-Tag: noindex` — сайт не индексируется.
 
-## Локальная проверка
+## Локально
 
 ```
-npm run dev
+cp .env.example .env   # заполнить
+npm start              # http://127.0.0.1:8787
 ```
-Открой http://localhost:8787. Для локального теста без Linkvertise удобно временно не задавать `LV_ANTI_BYPASS`.

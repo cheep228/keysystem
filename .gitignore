@@ -2,8 +2,8 @@ node_modules/
 .wrangler/
 .dev.vars
 .env
-# сам хаб не публикуем — он загружается в KV через npm run upload-script
+# сам хаб не публикуем — он лежит только на сервере
 script/*.lua
-# реальный домен и боевой loader — только локально
-wrangler.prod.toml
+# боевой loader с реальным доменом и данные ключей — только локально/на сервере
 loader/*.prod.lua
+data/

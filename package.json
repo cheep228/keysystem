@@ -1,12 +1,11 @@
 {
   "name": "srannyhub-keys",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy -c wrangler.prod.toml",
-    "upload-script": "wrangler kv key put -c wrangler.prod.toml --binding=KEYS --remote script --path=script/SrannyHub.lua"
+    "start": "node server/server.mjs"
   },
-  "devDependencies": {
-    "wrangler": "^4.0.0"
+  "engines": {
+    "node": ">=20"
   }
 }
