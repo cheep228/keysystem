@@ -90,6 +90,46 @@ function linkvertiseUrl(env, target) {
   return `https://link-to.net/${env.LV_USER_ID}/${rand}/dynamic?r=${encodeURIComponent(base64Utf8(target))}`;
 }
 
+// Lootlabs: создаём content locker через API, он возвращает ссылку на прохождение.
+// POST https://be.lootlabs.gg/api/lootlabs/content_locker  { api_token, title, url, tier_id, number_of_tasks }
+async function lootlabsUrl(env, target, title) {
+  const res = await fetch("https://be.lootlabs.gg/api/lootlabs/content_locker", {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({
+      api_token: env.LOOTLABS_API_TOKEN,
+      title: title || `${env.HUB_NAME || "SrannyHub"} key`,
+      url: target,
+      tier_id: Number(env.LOOTLABS_TIER_ID || 1),
+      number_of_tasks: Number(env.LOOTLABS_TASKS || 1),
+    }),
+  });
+  const data = await res.json().catch(() => null);
+  // API отдаёт ссылку в message (иногда в data/url) — проверяем все варианты
+  const link = data && (typeof data.message === "string" ? data.message : data.message?.url || data.url || data.data?.url);
+  if (!link || !/^https?:\/\//.test(link)) throw new Error(`lootlabs: ${res.status} ${JSON.stringify(data)?.slice(0, 200)}`);
+  return link;
+}
+
+// Lootlabs anti-bypass: на /claim прилетает ?data=<зашифровано>, проверяем через API
+async function lootlabsDataValid(env, data) {
+  if (!env.LOOTLABS_ANTI_BYPASS || env.LOOTLABS_ANTI_BYPASS === "0") return true;
+  if (!data) return false;
+  try {
+    const res = await fetch("https://be.lootlabs.gg/api/lootlabs/anti_bypassing", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ api_token: env.LOOTLABS_API_TOKEN, data }),
+    });
+    const j = await res.json().catch(() => null);
+    const v = j && (j.message ?? j.data ?? j);
+    return v === true || v === "true" || v?.is_valid === true || v?.valid === true;
+  } catch (err) {
+    console.error("lootlabs anti-bypass:", err);
+    return false;
+  }
+}
+
 // Linkvertise Anti-Bypassing: POST .../anti_bypassing?token=&hash= -> TRUE / FALSE
 async function linkvertiseHashValid(env, hash) {
   if (env.DEV_NO_LINKVERTISE === "1") return true;
@@ -155,29 +195,56 @@ function page(env, title, body, status = 200) {
   return new Response(html, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 }
 
+// какие способы получения ключа настроены
+function providers(env) {
+  const list = [];
+  if (env.LV_USER_ID) list.push({ id: "linkvertise", name: "Linkvertise" });
+  if (env.LOOTLABS_API_TOKEN) list.push({ id: "lootlabs", name: "Lootlabs" });
+  return list;
+}
+
 function home(env) {
   const hours = Number(env.KEY_HOURS || 24);
+  const list = providers(env);
+  const buttons = list.length
+    ? list.map((p) => `<a class="btn" style="margin-bottom:8px" href="/start?p=${p.id}">${esc(p.name)}</a>`).join("")
+    : `<p class="muted">Ни один сервис не настроен: заполни LV_USER_ID или LOOTLABS_API_TOKEN в .env</p>`;
   return page(env, "Key", `
     <h2>Получить ключ</h2>
     <ol class="steps">
-      <li>Нажми «Получить ключ»</li>
-      <li>Пройди Linkvertise до конца</li>
+      <li>Выбери, через что получить ключ</li>
+      <li>Пройди задания до конца</li>
       <li>Скопируй ключ и вставь его в скрипт</li>
     </ol>
-    <a class="btn" href="/start">Получить ключ</a>
+    ${buttons}
     <p class="muted">Ключ действует ${hours} ч и привязывается к одному устройству.</p>`);
 }
 
 async function start(request, env, url) {
+  const list = providers(env);
+  const wanted = url.searchParams.get("p") || "";
+  const provider = list.find((p) => p.id === wanted) || list[0];
+  if (!provider) return page(env, "Ошибка", `<h2 class="bad">Не настроено</h2><p class="muted">Заполни LV_USER_ID или LOOTLABS_API_TOKEN в .env</p>`, 503);
+
   const session = randomHex(16);
   await env.KEYS.put(
     `sess:${session}`,
-    JSON.stringify({ created: Date.now(), ip: await sha256(clientIp(request)) }),
+    JSON.stringify({ created: Date.now(), ip: await sha256(clientIp(request)), provider: provider.id }),
     { expirationTtl: SESSION_TTL }
   );
   const target = `${url.origin}/claim?s=${session}`;
-  // DEV_NO_LINKVERTISE=1 — только для локальной проверки: сразу на /claim, без Linkvertise
+
+  // DEV_NO_LINKVERTISE=1 — только для локальной проверки: сразу на /claim, без заданий
   if (env.DEV_NO_LINKVERTISE === "1") return Response.redirect(target, 302);
+
+  if (provider.id === "lootlabs") {
+    try {
+      return Response.redirect(await lootlabsUrl(env, target), 302);
+    } catch (err) {
+      console.error(err);
+      return page(env, "Ошибка", `<h2 class="bad">Lootlabs недоступен</h2><p class="muted">Попробуй Linkvertise или зайди позже.</p><a class="btn" href="/">На главную</a>`, 502);
+    }
+  }
   return Response.redirect(linkvertiseUrl(env, target), 302);
 }
 
@@ -193,8 +260,14 @@ async function claim(request, env, url) {
   const ipHash = await sha256(clientIp(request));
 
   if (sess.ip !== ipHash) return fail("Сессия начата с другого устройства.");
-  if (Date.now() - sess.created < Number(env.MIN_SECONDS || 10) * 1000) return fail("Слишком быстро — похоже на обход Linkvertise.");
-  if (!(await linkvertiseHashValid(env, hash))) return fail("Linkvertise не подтвердил прохождение.");
+  if (Date.now() - sess.created < Number(env.MIN_SECONDS || 10) * 1000) return fail("Слишком быстро — похоже на обход заданий.");
+
+  if (sess.provider === "lootlabs") {
+    const data = url.searchParams.get("data") || url.searchParams.get("hash") || "";
+    if (!(await lootlabsDataValid(env, data))) return fail("Lootlabs не подтвердил прохождение.");
+  } else if (!(await linkvertiseHashValid(env, hash))) {
+    return fail("Linkvertise не подтвердил прохождение.");
+  }
 
   await env.KEYS.delete(`sess:${s}`);
 
